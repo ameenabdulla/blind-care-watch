@@ -137,41 +137,67 @@ app.get('/', (req, res) => {
       width: 140px;
       height: 74px;
       cursor: pointer;
+      display: inline-block;
+      touch-action: manipulation;
     }
     .switch-wrap input {
+      position: absolute;
       opacity: 0;
       width: 0;
       height: 0;
+      pointer-events: none;
     }
-    .slider {
+    
+    /* Base track (dark slate) */
+    .slider-track {
       position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
+      inset: 0;
       background: #1e293b;
-      border: 2px solid rgba(255, 255, 255, 0.1);
+      border: 2px solid rgba(255, 255, 255, 0.12);
       border-radius: 50px;
-      transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+      overflow: hidden;
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
     }
-    .slider:before {
+
+    /* Smooth glow overlay (100% GPU composited opacity fade, 0% stutter) */
+    .slider-glow {
       position: absolute;
-      content: "";
-      height: 58px;
-      width: 58px;
+      inset: 0;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      opacity: 0;
+      transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      will-change: opacity;
+    }
+
+    /* The White Mechanical Knob */
+    .slider-knob {
+      position: absolute;
+      top: 6px;
       left: 6px;
-      bottom: 6px;
+      width: 58px;
+      height: 58px;
       background: #ffffff;
       border-radius: 50%;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-      transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
-      will-change: transform;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.2);
       transform: translate3d(0, 0, 0);
+      transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1), width 0.18s ease;
+      will-change: transform;
+      z-index: 2;
     }
-    input:checked + .slider {
-      background: linear-gradient(135deg, #0284c7, #38bdf8);
-      border-color: var(--neon-blue);
-      box-shadow: 0 0 35px rgba(56, 189, 248, 0.5);
+
+    /* Active / Checked States */
+    input:checked ~ .slider-track {
+      border-color: rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 35px rgba(56, 189, 248, 0.45);
     }
-    input:checked + .slider:before {
+    input:checked ~ .slider-track .slider-glow {
+      opacity: 1;
+    }
+    input:checked ~ .slider-knob {
       transform: translate3d(66px, 0, 0);
+    }
+    .switch-wrap:active .slider-knob {
+      width: 63px;
     }
 
     /* Status Text */
@@ -209,7 +235,10 @@ app.get('/', (req, res) => {
   <!-- ULTRA SMOOTH SLIDE SWITCH -->
   <label class="switch-wrap">
     <input type="checkbox" id="d2Switch" onchange="userToggled(this.checked)">
-    <span class="slider"></span>
+    <div class="slider-track">
+      <div class="slider-glow"></div>
+    </div>
+    <div class="slider-knob"></div>
   </label>
 
   <div class="status-text" id="statusLabel">
@@ -217,7 +246,7 @@ app.get('/', (req, res) => {
   </div>
 
   <div class="footer-note" id="subStatus">
-    Checking device connection...
+    Checking connection...
   </div>
 </div>
 
@@ -228,28 +257,38 @@ app.get('/', (req, res) => {
   const badgeText = document.getElementById('badgeText');
   const subStatus = document.getElementById('subStatus');
 
-  let isLockedByUser = false;
-  let unlockTimer = null;
+  let userTargetState = null;
+  let lastActionTime = 0;
 
   // Instant zero-lag UI response when user touches switch
   function userToggled(checked) {
-    // 1. Lock UI so background polling never stutters or resets the switch!
-    isLockedByUser = true;
-    clearTimeout(unlockTimer);
-    unlockTimer = setTimeout(() => { isLockedByUser = false; }, 1500);
+    userTargetState = checked;
+    lastActionTime = Date.now();
 
-    // 2. Instant smooth UI update (0 milliseconds!)
-    updateText(checked);
+    // Instant smooth UI update (0ms lag!)
+    updateUI(checked);
 
-    // 3. Send to Render server immediately
+    // Subtle haptic click on mobile
+    if (navigator.vibrate) {
+      try { navigator.vibrate(25); } catch(e){}
+    }
+
+    // Send to Render server immediately
     fetch('/api/d2', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: checked })
+    }).then(r => r.json()).then(data => {
+      if (data && typeof data.d2 === 'boolean' && userTargetState === data.d2) {
+        setTimeout(() => {
+          if (userTargetState === data.d2) userTargetState = null;
+        }, 500);
+      }
     }).catch(err => console.error(err));
   }
 
-  function updateText(isOn) {
+  function updateUI(isOn) {
+    toggle.checked = isOn;
     if (isOn) {
       label.innerText = 'PIN D2 is ON ⚡';
       label.classList.add('on');
@@ -259,18 +298,26 @@ app.get('/', (req, res) => {
     }
   }
 
-  // Smooth polling every 350ms (only reconciles when user is not actively flipping)
+  // Smooth polling every 350ms with Anti-Jitter Shield
   async function syncState() {
     try {
       const res = await fetch('/api/d2');
       const data = await res.json();
       if (!data) return;
 
-      // Only update switch position from server if user is not currently touching it
-      if (!isLockedByUser) {
+      const timeSinceAction = Date.now() - lastActionTime;
+      const isUnderShield = userTargetState !== null && timeSinceAction < 3000;
+
+      if (isUnderShield) {
+        // Reject stale state that conflicts with user's toggle
+        if (data.d2 === userTargetState) {
+          userTargetState = null; // Server caught up!
+          if (toggle.checked !== data.d2) updateUI(data.d2);
+        }
+      } else {
+        // Normal background sync
         if (toggle.checked !== data.d2) {
-          toggle.checked = data.d2;
-          updateText(data.d2);
+          updateUI(data.d2);
         }
       }
 
@@ -278,7 +325,7 @@ app.get('/', (req, res) => {
       if (data.online) {
         badgeBox.className = 'status-badge online';
         badgeText.innerText = 'ESP32: ONLINE';
-        subStatus.innerText = 'Zero-lag cloud connection active';
+        subStatus.innerText = 'Zero-lag hardware link active';
       } else {
         badgeBox.className = 'status-badge offline';
         badgeText.innerText = 'ESP32: OFFLINE';
