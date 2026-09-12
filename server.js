@@ -6,26 +6,24 @@ app.use(express.json());
 
 // In-memory state
 let d2State = false;
-let lastEspHeartbeat = 0; // Timestamp of last ESP32 check-in
+let lastEspHeartbeat = 0;
 
-// API for ESP32 and Web App
+// Fast API for ESP32 and Web App
 app.get('/api/d2', (req, res) => {
-  // If request is from ESP32 hardware, update heartbeat
   if (req.query.device === 'esp32') {
     lastEspHeartbeat = Date.now();
   }
 
-  // ESP32 is online if it checked in within the last 3.5 seconds
-  const isOnline = (Date.now() - lastEspHeartbeat) < 3500;
+  const isOnline = (Date.now() - lastEspHeartbeat) < 4000;
 
   res.json({
     d2: d2State,
     online: isOnline,
-    last_seen_seconds_ago: lastEspHeartbeat ? Math.round((Date.now() - lastEspHeartbeat) / 1000) : null
+    last_seen: lastEspHeartbeat ? Math.round((Date.now() - lastEspHeartbeat) / 1000) : null
   });
 });
 
-// API to toggle D2 state (from web slide switch)
+// Fast API to toggle D2 state
 app.post('/api/d2', (req, res) => {
   const { state } = req.body;
   if (typeof state === 'boolean') {
@@ -37,26 +35,26 @@ app.post('/api/d2', (req, res) => {
   }
 });
 
-// Single-page slide switch UI with Online/Offline indicator
+// Single-page slide switch UI with Ultra-Smooth 120FPS Animation & Zero-Lag Lock
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 D2 Controller & Status</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ESP32 D2 Controller</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #090d16;
-      --card: #131b2e;
+      --bg: #070a12;
+      --card: #0f172a;
       --neon-blue: #38bdf8;
       --neon-green: #22c55e;
       --neon-red: #ef4444;
-      --text: #f3f4f6;
+      --text: #f8fafc;
       --text-muted: #94a3b8;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
     body {
       background: var(--bg);
       color: var(--text);
@@ -69,16 +67,17 @@ app.get('/', (req, res) => {
     .card {
       background: var(--card);
       border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 32px;
-      padding: 40px 32px;
+      border-radius: 36px;
+      padding: 44px 32px;
       width: 100%;
-      max-width: 380px;
+      max-width: 360px;
       display: flex;
       flex-direction: column;
       align-items: center;
       text-align: center;
-      gap: 28px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      gap: 30px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
+      user-select: none;
     }
     .header h1 {
       font-size: 1.35rem;
@@ -88,7 +87,7 @@ app.get('/', (req, res) => {
     .header p {
       font-size: 0.8rem;
       color: var(--text-muted);
-      margin-top: 3px;
+      margin-top: 4px;
     }
 
     /* ONLINE / OFFLINE STATUS BADGE */
@@ -96,12 +95,12 @@ app.get('/', (req, res) => {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
+      padding: 7px 16px;
       border-radius: 30px;
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       font-weight: 800;
       letter-spacing: 0.03em;
-      transition: all 0.3s ease;
+      transition: all 0.25s ease;
     }
     .status-badge.online {
       background: rgba(34, 197, 94, 0.15);
@@ -114,10 +113,10 @@ app.get('/', (req, res) => {
       color: var(--neon-red);
     }
     .status-dot {
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
-      transition: all 0.3s ease;
+      transition: all 0.25s ease;
     }
     .status-badge.online .status-dot {
       background: var(--neon-green);
@@ -126,18 +125,17 @@ app.get('/', (req, res) => {
     }
     .status-badge.offline .status-dot {
       background: var(--neon-red);
-      box-shadow: 0 0 10px var(--neon-red);
     }
     @keyframes pulse-dot {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.4; transform: scale(0.85); }
     }
 
-    /* THE SLIDE SWITCH */
+    /* ULTRA SMOOTH 120FPS SLIDE SWITCH */
     .switch-wrap {
       position: relative;
-      width: 130px;
-      height: 70px;
+      width: 140px;
+      height: 74px;
       cursor: pointer;
     }
     .switch-wrap input {
@@ -150,36 +148,37 @@ app.get('/', (req, res) => {
       top: 0; left: 0; right: 0; bottom: 0;
       background: #1e293b;
       border: 2px solid rgba(255, 255, 255, 0.1);
-      border-radius: 40px;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50px;
+      transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
     }
     .slider:before {
       position: absolute;
       content: "";
-      height: 54px;
-      width: 54px;
+      height: 58px;
+      width: 58px;
       left: 6px;
       bottom: 6px;
       background: #ffffff;
       border-radius: 50%;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+      will-change: transform;
+      transform: translate3d(0, 0, 0);
     }
     input:checked + .slider {
       background: linear-gradient(135deg, #0284c7, #38bdf8);
       border-color: var(--neon-blue);
-      box-shadow: 0 0 35px rgba(56, 189, 248, 0.6);
+      box-shadow: 0 0 35px rgba(56, 189, 248, 0.5);
     }
     input:checked + .slider:before {
-      transform: translateX(60px);
-      background: #ffffff;
+      transform: translate3d(66px, 0, 0);
     }
 
     /* Status Text */
     .status-text {
-      font-size: 1.2rem;
+      font-size: 1.25rem;
       font-weight: 800;
-      transition: color 0.3s ease;
+      transition: color 0.2s ease, text-shadow 0.2s ease;
       color: #94a3b8;
     }
     .status-text.on {
@@ -198,7 +197,7 @@ app.get('/', (req, res) => {
 <div class="card">
   <div class="header">
     <h1>ESP32 D2 CONTROLLER</h1>
-    <p>Worldwide Cloud Switch</p>
+    <p>Zero-Lag Worldwide Switch</p>
   </div>
 
   <!-- ONLINE / OFFLINE BADGE -->
@@ -207,9 +206,9 @@ app.get('/', (req, res) => {
     <span id="badgeText">ESP32: OFFLINE</span>
   </div>
 
-  <!-- SLIDE SWITCH -->
+  <!-- ULTRA SMOOTH SLIDE SWITCH -->
   <label class="switch-wrap">
-    <input type="checkbox" id="d2Switch" onchange="toggleD2(this.checked)">
+    <input type="checkbox" id="d2Switch" onchange="userToggled(this.checked)">
     <span class="slider"></span>
   </label>
 
@@ -218,7 +217,7 @@ app.get('/', (req, res) => {
   </div>
 
   <div class="footer-note" id="subStatus">
-    Waiting for ESP32 connection...
+    Checking device connection...
   </div>
 </div>
 
@@ -229,21 +228,28 @@ app.get('/', (req, res) => {
   const badgeText = document.getElementById('badgeText');
   const subStatus = document.getElementById('subStatus');
 
-  async function toggleD2(checked) {
-    updateUI(checked);
-    try {
-      await fetch('/api/d2', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: checked })
-      });
-    } catch(e) {
-      console.error(e);
-    }
+  let isLockedByUser = false;
+  let unlockTimer = null;
+
+  // Instant zero-lag UI response when user touches switch
+  function userToggled(checked) {
+    // 1. Lock UI so background polling never stutters or resets the switch!
+    isLockedByUser = true;
+    clearTimeout(unlockTimer);
+    unlockTimer = setTimeout(() => { isLockedByUser = false; }, 1500);
+
+    // 2. Instant smooth UI update (0 milliseconds!)
+    updateText(checked);
+
+    // 3. Send to Render server immediately
+    fetch('/api/d2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: checked })
+    }).catch(err => console.error(err));
   }
 
-  function updateUI(isOn) {
-    toggle.checked = isOn;
+  function updateText(isOn) {
     if (isOn) {
       label.innerText = 'PIN D2 is ON ⚡';
       label.classList.add('on');
@@ -253,35 +259,38 @@ app.get('/', (req, res) => {
     }
   }
 
-  // Poll state every 400ms for live sync
+  // Smooth polling every 350ms (only reconciles when user is not actively flipping)
   async function syncState() {
     try {
       const res = await fetch('/api/d2');
       const data = await res.json();
       if (!data) return;
 
-      // Update Switch
-      if (data.d2 !== toggle.checked) {
-        updateUI(data.d2);
+      // Only update switch position from server if user is not currently touching it
+      if (!isLockedByUser) {
+        if (toggle.checked !== data.d2) {
+          toggle.checked = data.d2;
+          updateText(data.d2);
+        }
       }
 
-      // Update Online / Offline Badge
+      // Live Online / Offline Badge
       if (data.online) {
         badgeBox.className = 'status-badge online';
         badgeText.innerText = 'ESP32: ONLINE';
-        subStatus.innerText = 'Hardware connected via Wi-Fi (Active Heartbeat)';
+        subStatus.innerText = 'Zero-lag cloud connection active';
       } else {
         badgeBox.className = 'status-badge offline';
         badgeText.innerText = 'ESP32: OFFLINE';
-        subStatus.innerText = data.last_seen_seconds_ago 
-          ? 'Device disconnected (Last seen ' + data.last_seen_seconds_ago + 's ago)'
-          : 'Waiting for ESP32 device to connect...';
+        subStatus.innerText = data.last_seen 
+          ? 'Device disconnected (Last seen ' + data.last_seen + 's ago)' 
+          : 'Waiting for ESP32 connection...';
       }
 
     } catch(e){}
   }
 
-  setInterval(syncState, 400);
+  setInterval(syncState, 350);
   syncState();
 </script>
 
@@ -290,5 +299,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`D2 Switch Server running on port ${port}`);
+  console.log(`Zero-Lag D2 Switch Server running on port ${port}`);
 });
