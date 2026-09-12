@@ -7,8 +7,21 @@ app.use(express.json());
 // In-memory state
 let d2State = false;
 let lastEspHeartbeat = 0;
+let isFallAlert = false;
+let isSosAlert = false;
+let fallDetails = null;
+let resetRequested = false;
+let lastTelemetry = {
+  g_force: 1.0,
+  pitch: 0,
+  roll: 0,
+  posture: "UPRIGHT",
+  activity: "NORMAL",
+  battery: 98,
+  timestamp: Date.now()
+};
 
-// Fast API for ESP32 and Web App
+// Fast API for ESP32 and Web App (backward compatible)
 app.get('/api/d2', (req, res) => {
   if (req.query.device === 'esp32') {
     lastEspHeartbeat = Date.now();
@@ -19,6 +32,8 @@ app.get('/api/d2', (req, res) => {
   res.json({
     d2: d2State,
     online: isOnline,
+    fall: isFallAlert,
+    sos: isSosAlert,
     last_seen: lastEspHeartbeat ? Math.round((Date.now() - lastEspHeartbeat) / 1000) : null
   });
 });
@@ -33,6 +48,75 @@ app.post('/api/d2', (req, res) => {
   } else {
     res.status(400).json({ error: "State must be boolean" });
   }
+});
+
+// Telemetry endpoint called by ESP32 every 350ms
+app.post('/api/telemetry', (req, res) => {
+  lastEspHeartbeat = Date.now();
+  const data = req.body || {};
+
+  if (data.fall) {
+    if (!isFallAlert) {
+      console.log('🚨 [ALERT] CRITICAL PATIENT FALL DETECTED by ESP32!');
+      isFallAlert = true;
+      fallDetails = {
+        time: new Date().toLocaleTimeString(),
+        g_force: data.g_force || 2.5,
+        pitch: data.pitch || 0,
+        roll: data.roll || 0,
+        posture: data.posture || "LYING DOWN (FLAT)"
+      };
+    }
+  }
+
+  if (data.sos) {
+    isSosAlert = true;
+    console.log('🚨 [ALERT] SOS TRIGGERED by ESP32!');
+  }
+
+  if (data.g_force !== undefined) {
+    lastTelemetry = {
+      g_force: data.g_force,
+      pitch: data.pitch,
+      roll: data.roll,
+      posture: data.posture || "UPRIGHT",
+      activity: data.activity || "NORMAL",
+      battery: data.battery || 98,
+      timestamp: Date.now()
+    };
+  }
+
+  const sendReset = resetRequested;
+  if (resetRequested) resetRequested = false;
+
+  res.json({
+    d2: d2State,
+    reset_alarm: sendReset
+  });
+});
+
+// Reset Fall Alarm
+app.post('/api/reset-alarm', (req, res) => {
+  isFallAlert = false;
+  isSosAlert = false;
+  fallDetails = null;
+  resetRequested = true;
+  console.log('✅ [ALERT] Alarm reset by user on Web App!');
+  res.json({ success: true });
+});
+
+// Comprehensive status endpoint for web app
+app.get('/api/status', (req, res) => {
+  const isOnline = (Date.now() - lastEspHeartbeat) < 4000;
+  res.json({
+    d2: d2State,
+    online: isOnline,
+    fall: isFallAlert,
+    sos: isSosAlert,
+    fall_details: fallDetails,
+    telemetry: lastTelemetry,
+    last_seen: lastEspHeartbeat ? Math.round((Date.now() - lastEspHeartbeat) / 1000) : null
+  });
 });
 
 // Single-page slide switch UI with Ultra-Smooth 120FPS Animation & Zero-Lag Lock
@@ -212,6 +296,83 @@ app.get('/', (req, res) => {
       text-shadow: 0 0 20px rgba(56, 189, 248, 0.6);
     }
 
+    /* FALL EMERGENCY WARNING BANNER */
+    .fall-banner {
+      display: none;
+      width: 100%;
+      background: rgba(239, 68, 68, 0.16);
+      border: 2px solid #ef4444;
+      border-radius: 26px;
+      padding: 22px 18px;
+      text-align: center;
+      animation: pulse-red 1s infinite alternate ease-in-out;
+      box-shadow: 0 0 35px rgba(239, 68, 68, 0.4);
+    }
+    .fall-banner.active {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    @keyframes pulse-red {
+      from { box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); transform: scale(1); }
+      to { box-shadow: 0 0 45px rgba(239, 68, 68, 0.7); transform: scale(1.02); }
+    }
+    .fall-title {
+      font-size: 1.12rem;
+      font-weight: 800;
+      color: #f87171;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .fall-desc {
+      font-size: 0.82rem;
+      color: #fecaca;
+      line-height: 1.4;
+    }
+    .fall-meta {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #ffffff;
+      background: rgba(0,0,0,0.3);
+      padding: 6px 14px;
+      border-radius: 20px;
+    }
+    .btn-reset {
+      background: #22c55e;
+      color: #ffffff;
+      border: none;
+      padding: 10px 22px;
+      border-radius: 20px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4);
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+    .btn-reset:active {
+      transform: scale(0.95);
+      background: #16a34a;
+    }
+
+    /* Live Telemetry Info Strip */
+    .telemetry-strip {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 20px;
+      padding: 10px 14px;
+      display: flex;
+      justify-content: space-around;
+      font-size: 0.73rem;
+      color: var(--text-muted);
+    }
+    .telemetry-strip span b {
+      color: #f8fafc;
+    }
+
     .footer-note {
       font-size: 0.72rem;
       color: #64748b;
@@ -223,13 +384,21 @@ app.get('/', (req, res) => {
 <div class="card">
   <div class="header">
     <h1>ESP32 D2 CONTROLLER</h1>
-    <p>Zero-Lag Worldwide Switch</p>
+    <p>Zero-Lag Switch & Patient Fall Watch</p>
   </div>
 
   <!-- ONLINE / OFFLINE BADGE -->
   <div class="status-badge offline" id="badgeBox">
     <div class="status-dot"></div>
     <span id="badgeText">ESP32: OFFLINE</span>
+  </div>
+
+  <!-- CRITICAL FALL EMERGENCY WARNING (Auto-pops on fall) -->
+  <div class="fall-banner" id="fallBanner">
+    <div class="fall-title">🚨 CRITICAL FALL ALERT!</div>
+    <div class="fall-desc" id="fallDesc">Patient Fall Detected by Accelerometer!</div>
+    <div class="fall-meta" id="fallMeta">Impact: -- | Posture: --</div>
+    <button class="btn-reset" onclick="dismissAlarm()">✅ DISMISS ALARM / I AM OK</button>
   </div>
 
   <!-- ULTRA SMOOTH SLIDE SWITCH -->
@@ -245,6 +414,13 @@ app.get('/', (req, res) => {
     PIN D2 is OFF 🌑
   </div>
 
+  <!-- LIVE TELEMETRY SENSOR STRIP -->
+  <div class="telemetry-strip" id="telemStrip">
+    <span>Motion: <b id="tMotion">1.00G</b></span>
+    <span>Posture: <b id="tPosture">UPRIGHT</b></span>
+    <span>Tilt: <b id="tTilt">0°</b></span>
+  </div>
+
   <div class="footer-note" id="subStatus">
     Checking connection...
   </div>
@@ -256,9 +432,64 @@ app.get('/', (req, res) => {
   const badgeBox = document.getElementById('badgeBox');
   const badgeText = document.getElementById('badgeText');
   const subStatus = document.getElementById('subStatus');
+  const fallBanner = document.getElementById('fallBanner');
+  const fallDesc = document.getElementById('fallDesc');
+  const fallMeta = document.getElementById('fallMeta');
+  const tMotion = document.getElementById('tMotion');
+  const tPosture = document.getElementById('tPosture');
+  const tTilt = document.getElementById('tTilt');
 
   let userTargetState = null;
   let lastActionTime = 0;
+  let isAlertPlaying = false;
+  let sirenAudio = null;
+  let sirenTimer = null;
+
+  // Web Audio Synthesized Emergency Siren
+  function startSiren() {
+    if (isAlertPlaying) return;
+    isAlertPlaying = true;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      sirenAudio = new AudioCtx();
+      const osc = sirenAudio.createOscillator();
+      const gain = sirenAudio.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(800, sirenAudio.currentTime);
+      gain.gain.setValueAtTime(0.12, sirenAudio.currentTime);
+      osc.connect(gain);
+      gain.connect(sirenAudio.destination);
+      osc.start();
+
+      let high = true;
+      sirenTimer = setInterval(() => {
+        if (!sirenAudio) return;
+        osc.frequency.setValueAtTime(high ? 1150 : 750, sirenAudio.currentTime);
+        high = !high;
+      }, 250);
+    } catch(e){}
+
+    if (navigator.vibrate) {
+      try { navigator.vibrate([300, 150, 300, 150, 500]); } catch(e){}
+    }
+  }
+
+  function stopSiren() {
+    isAlertPlaying = false;
+    if (sirenTimer) { clearInterval(sirenTimer); sirenTimer = null; }
+    if (sirenAudio) {
+      try { sirenAudio.close(); } catch(e){}
+      sirenAudio = null;
+    }
+  }
+
+  // Dismiss Alarm Action
+  function dismissAlarm() {
+    stopSiren();
+    fallBanner.classList.remove('active');
+    fetch('/api/reset-alarm', { method: 'POST' }).catch(console.error);
+  }
 
   // Instant zero-lag UI response when user touches switch
   function userToggled(checked) {
@@ -298,13 +529,40 @@ app.get('/', (req, res) => {
     }
   }
 
-  // Smooth polling every 350ms with Anti-Jitter Shield
+  // Smooth polling every 350ms with Anti-Jitter Shield & Fall Detection
   async function syncState() {
     try {
-      const res = await fetch('/api/d2');
+      const res = await fetch('/api/status');
       const data = await res.json();
       if (!data) return;
 
+      // 1. Fall & Emergency Alert Handling
+      if (data.fall || data.sos) {
+        fallBanner.classList.add('active');
+        if (data.sos) {
+          fallDesc.innerText = 'SOS Button Pressed on Watch!';
+        } else {
+          fallDesc.innerText = 'Patient Fall Detected by Accelerometer!';
+        }
+        if (data.fall_details) {
+          fallMeta.innerText = 'Impact: ' + Number(data.fall_details.g_force).toFixed(2) + 'G | Time: ' + data.fall_details.time;
+        }
+        startSiren();
+      } else {
+        if (!isAlertPlaying) {
+          fallBanner.classList.remove('active');
+        }
+      }
+
+      // 2. Live Telemetry
+      if (data.telemetry) {
+        tMotion.innerText = Number(data.telemetry.g_force).toFixed(2) + 'G';
+        tPosture.innerText = data.telemetry.posture || 'UPRIGHT';
+        const tilt = Math.max(Math.abs(data.telemetry.pitch || 0), Math.abs(data.telemetry.roll || 0));
+        tTilt.innerText = Math.round(tilt) + '°';
+      }
+
+      // 3. Switch State Reconciliation (with Anti-Jitter Shield)
       const timeSinceAction = Date.now() - lastActionTime;
       const isUnderShield = userTargetState !== null && timeSinceAction < 3000;
 
@@ -321,11 +579,11 @@ app.get('/', (req, res) => {
         }
       }
 
-      // Live Online / Offline Badge
+      // 4. Live Online / Offline Badge
       if (data.online) {
         badgeBox.className = 'status-badge online';
         badgeText.innerText = 'ESP32: ONLINE';
-        subStatus.innerText = 'Zero-lag hardware link active';
+        subStatus.innerText = 'Zero-lag hardware link & fall monitor active';
       } else {
         badgeBox.className = 'status-badge offline';
         badgeText.innerText = 'ESP32: OFFLINE';
