@@ -4,12 +4,25 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// In-memory D2 state
+// In-memory state
 let d2State = false;
+let lastEspHeartbeat = 0; // Timestamp of last ESP32 check-in
 
-// API for ESP32 to get current D2 state
+// API for ESP32 and Web App
 app.get('/api/d2', (req, res) => {
-  res.json({ d2: d2State });
+  // If request is from ESP32 hardware, update heartbeat
+  if (req.query.device === 'esp32') {
+    lastEspHeartbeat = Date.now();
+  }
+
+  // ESP32 is online if it checked in within the last 3.5 seconds
+  const isOnline = (Date.now() - lastEspHeartbeat) < 3500;
+
+  res.json({
+    d2: d2State,
+    online: isOnline,
+    last_seen_seconds_ago: lastEspHeartbeat ? Math.round((Date.now() - lastEspHeartbeat) / 1000) : null
+  });
 });
 
 // API to toggle D2 state (from web slide switch)
@@ -24,20 +37,22 @@ app.post('/api/d2', (req, res) => {
   }
 });
 
-// Single-page slide switch UI
+// Single-page slide switch UI with Online/Offline indicator
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 D2 Controller</title>
+  <title>ESP32 D2 Controller & Status</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #090d16;
       --card: #131b2e;
       --neon-blue: #38bdf8;
+      --neon-green: #22c55e;
+      --neon-red: #ef4444;
       --text: #f3f4f6;
       --text-muted: #94a3b8;
     }
@@ -55,25 +70,67 @@ app.get('/', (req, res) => {
       background: var(--card);
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 32px;
-      padding: 48px 36px;
+      padding: 40px 32px;
       width: 100%;
       max-width: 380px;
       display: flex;
       flex-direction: column;
       align-items: center;
       text-align: center;
-      gap: 32px;
+      gap: 28px;
       box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
     }
     .header h1 {
-      font-size: 1.4rem;
+      font-size: 1.35rem;
       font-weight: 800;
       letter-spacing: -0.02em;
     }
     .header p {
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       color: var(--text-muted);
-      margin-top: 4px;
+      margin-top: 3px;
+    }
+
+    /* ONLINE / OFFLINE STATUS BADGE */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 30px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      transition: all 0.3s ease;
+    }
+    .status-badge.online {
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid rgba(34, 197, 94, 0.35);
+      color: var(--neon-green);
+    }
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: var(--neon-red);
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      transition: all 0.3s ease;
+    }
+    .status-badge.online .status-dot {
+      background: var(--neon-green);
+      box-shadow: 0 0 12px var(--neon-green);
+      animation: pulse-dot 1.5s infinite;
+    }
+    .status-badge.offline .status-dot {
+      background: var(--neon-red);
+      box-shadow: 0 0 10px var(--neon-red);
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
     }
 
     /* THE SLIDE SWITCH */
@@ -120,7 +177,7 @@ app.get('/', (req, res) => {
 
     /* Status Text */
     .status-text {
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       font-weight: 800;
       transition: color 0.3s ease;
       color: #94a3b8;
@@ -130,18 +187,9 @@ app.get('/', (req, res) => {
       text-shadow: 0 0 20px rgba(56, 189, 248, 0.6);
     }
 
-    .badge {
-      font-size: 0.75rem;
+    .footer-note {
+      font-size: 0.72rem;
       color: #64748b;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .dot {
-      width: 8px; height: 8px;
-      background: #10b981;
-      border-radius: 50%;
-      box-shadow: 0 0 10px #10b981;
     }
   </style>
 </head>
@@ -150,7 +198,13 @@ app.get('/', (req, res) => {
 <div class="card">
   <div class="header">
     <h1>ESP32 D2 CONTROLLER</h1>
-    <p>Worldwide Cloud Switch (Render)</p>
+    <p>Worldwide Cloud Switch</p>
+  </div>
+
+  <!-- ONLINE / OFFLINE BADGE -->
+  <div class="status-badge offline" id="badgeBox">
+    <div class="status-dot"></div>
+    <span id="badgeText">ESP32: OFFLINE</span>
   </div>
 
   <!-- SLIDE SWITCH -->
@@ -163,15 +217,17 @@ app.get('/', (req, res) => {
     PIN D2 is OFF 🌑
   </div>
 
-  <div class="badge">
-    <div class="dot"></div>
-    <span>Live Cloud Connected (Render)</span>
+  <div class="footer-note" id="subStatus">
+    Waiting for ESP32 connection...
   </div>
 </div>
 
 <script>
   const toggle = document.getElementById('d2Switch');
   const label = document.getElementById('statusLabel');
+  const badgeBox = document.getElementById('badgeBox');
+  const badgeText = document.getElementById('badgeText');
+  const subStatus = document.getElementById('subStatus');
 
   async function toggleD2(checked) {
     updateUI(checked);
@@ -202,9 +258,26 @@ app.get('/', (req, res) => {
     try {
       const res = await fetch('/api/d2');
       const data = await res.json();
-      if (data && data.d2 !== toggle.checked) {
+      if (!data) return;
+
+      // Update Switch
+      if (data.d2 !== toggle.checked) {
         updateUI(data.d2);
       }
+
+      // Update Online / Offline Badge
+      if (data.online) {
+        badgeBox.className = 'status-badge online';
+        badgeText.innerText = 'ESP32: ONLINE';
+        subStatus.innerText = 'Hardware connected via Wi-Fi (Active Heartbeat)';
+      } else {
+        badgeBox.className = 'status-badge offline';
+        badgeText.innerText = 'ESP32: OFFLINE';
+        subStatus.innerText = data.last_seen_seconds_ago 
+          ? 'Device disconnected (Last seen ' + data.last_seen_seconds_ago + 's ago)'
+          : 'Waiting for ESP32 device to connect...';
+      }
+
     } catch(e){}
   }
 
